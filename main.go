@@ -64,34 +64,40 @@ func (w weatherUnderground) temperature(city string) (float64, error) {
 	return kelvin, nil
 }
 
-func temperature(city string, providers ...weatherProvider) (float64, error) {
-	sum := 0.0
-
-	for _, provider := range providers {
-		k, err := provider.temperature(city)
-		if err != nil {
-			return 0, err
-		}
-
-		sum += k
-	}
-
-	return sum / float64(len(providers)), nil
-}
-
 type multiWeatherProvider []weatherProvider
 
 func (w multiWeatherProvider) temperature(city string) (float64, error) {
+	// make a channel for temperatures, and a channel for errors.
+	// Each provider will push a value into only one
+	temps := make(chan float64, len(w))
+	errs := make(chan error, len(w))
+
+	// For each provider, spawn a goroutine with an anoymous function
+	// That function will invoke the temperature methord, and forward the rresponse
+	for _, provider := range w {
+		go func(p weatherProvider) {
+			k, err := p.temperature(city)
+			if err != nil {
+				errs <- err
+				return
+			}
+			temps <- k
+		} (provider)
+	} 
+
 	sum := 0.0
 
-	for _, provider := range w {
-		k, err := provider.temperature(city)
-		if err != nil {
+	// Collect a temperature or an error from each provider.
+	for i := 0; i < len(w); i++ {
+		select {
+		case temp := <-temps: 
+			sum += temp
+		case err := <-errs:
 			return 0, err
 		}
-		sum += k
 	}
 
+	// Return the average, same as before.
 	return sum / float64(len(w)), nil
 }
 
